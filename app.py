@@ -113,9 +113,34 @@ if st.session_state.tracking_list:
                 os.remove(DATA_FILE)
             st.rerun()
 
-    df = pd.DataFrame(st.session_state.tracking_list)
-    df.columns = ["追跡番号", "ラベル", "現在の状況"]
-    st.dataframe(df, use_container_width=True)
+    # --- 🛠️ 個別削除を可能にするためのループ表示 ---
+    st.markdown(" ")
+    for index, item in enumerate(st.session_state.tracking_list):
+        num = item["tracking_no"]
+        lbl = item["label"]
+        status = item["status"]
+        
+        postal_url = f"https://trackings.post.japanpost.jp/services/srv/search/direct?reqCodeNo1={num}"
+        status_color = "🟢" if "完了" in status or "済み" in status else "🔵"
+        
+        with st.container():
+            # 横並びのレイアウト（番号、ラベル、状況、郵便局リンク、ゴミ箱ボタン）
+            c1, c2, c3, c4, c5 = st.columns([3, 3, 3, 2, 1])
+            c1.write(f"**番号**: {num}")
+            c2.write(f"**ラベル**: {lbl}")
+            c3.write(f"**状態**: {status_color} {status}")
+            c4.markdown(f"[🔍 郵便局サイト]({postal_url})")
+            
+            # 🗑️ 個別削除ボタンの処理
+            if c5.button("🗑️", key=f"del_{index}"):
+                st.session_state.tracking_list.pop(index) # リストから消す
+                if st.session_state.tracking_list:
+                    save_data(st.session_state.tracking_list) # 新しい状態を保存
+                else:
+                    if os.path.exists(DATA_FILE):
+                        os.remove(DATA_FILE) # 全部消えたらファイル自体を削除
+                st.rerun()
+            st.markdown(" ")
     
     st.caption("※アプリを開いたままの場合、3時間ごとに自動更新します。")
     time.sleep(0.1)
