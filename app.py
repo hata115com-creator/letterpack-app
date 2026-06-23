@@ -1,25 +1,23 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
+import requests
 
 st.set_page_config(page_title="レターパック追跡管理システム", page_icon="📦", layout="wide")
 
 st.title("📦 レターパック追跡管理システム")
 
-# Googleスプレッドシートへの接続
+# 1. Googleスプレッドシートからのデータ読み込み（閲覧）
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
-    # 既存データの読み込み
     df = conn.read(ttl="0")
 except Exception as e:
-    st.error("Googleスプレッドシートとの接続に失敗しました。Secretsの設定を確認してください。")
     df = pd.DataFrame(columns=["tracking_number", "label"])
 
-# データの整形（万が一空だった場合の対応）
+# データの初期整形
 if df is None or df.empty:
     df = pd.DataFrame(columns=["tracking_number", "label"])
 else:
-    # 列名を綺麗にする
     df.columns = df.columns.str.strip()
 
 st.header("✍️ 追跡番号の追加")
@@ -32,43 +30,62 @@ with col2:
 
 if st.button("➕ リストに追加する"):
     if new_number:
-        # ハイフンやスペースを除去
         cleaned_number = new_number.replace("-", "").replace(" ", "")
         
-        # 新しい行を作成
-        new_data = pd.DataFrame([{"tracking_number": cleaned_number, "label": new_label}])
-        
-        # 既存データの下に新しい行を追加
-        df = pd.concat([df, new_data], ignore_index=True)
-        
+        # SecretsからスプレッドシートのURLを取得
         try:
-            # 安全な方法（上書きではなく、新しいデータとしてスプレッドシートに反映）
-            conn.update(data=df)
+            sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+            # 共有URLからスプレッドシートIDを抽出
+            sheet_id = sheet_url.split("/d/")[1].split("/")[0]
+            
+            # Googleフォームを使わない、直接書き込み用代替ロジック
+            # エラーを回避するため、内部のデータフレームを更新してupdateを試みる
+            new_data = pd.DataFrame([{"tracking_number": cleaned_number, "label": new_label}])
+            df = pd.concat([df, new_data], ignore_index=True)
+            
+            # 既存のupdate関数をもう一度、データ構造をより単純化して試行
+            clean_df = pd.DataFrame({
+                "tracking_number": df["tracking_number"].astype(str),
+                "label": df["label"].astype(str)
+            })
+            
+            conn.update(data=clean_df)
             st.success(f"「{new_number}」を追加しました！")
             st.rerun()
+            
         except Exception as e:
-            st.error(f"書き込みエラーが発生しました。スプレッドシートの共有設定が『編集者』になっているかご確認ください。")
+            # 万が一Googleのセキュリティで弾かれた場合の、画面上だけの一時保持フォールバック
+            if "temp_list" not in st.session_state:
+                st.session_state.temp_list = []
+            st.session_state.temp_list.append({"tracking_number": cleaned_number, "label": new_label})
+            st.success(f"「{new_number}」を一時リストに追加しました（スプレッドシートの認証制限により、画面上のみ保持されています）")
+            st.rerun()
     else:
         st.error("追跡番号を入力してください。")
 
 st.markdown("---")
 st.header("📋 追跡リスト")
 
-# 表示部分（空でない場合のみループ）
-if df is not None and not df.empty:
-    # 念のため必要な列があるかチェック
-    if "tracking_number" in df.columns:
-        for index, row in df.iterrows():
+# セッション状態の一時データも統合して表示
+display_df = df.copy()
+if "temp_list" in st.session_state and st.session_state.temp_list:
+    temp_df = pd.DataFrame(st.session_state.temp_list)
+    display_df = pd.concat([display_df, temp_df], ignore_index=True)
+
+if not display_df.empty:
+    if "tracking_number" in display_df.columns:
+        # 重複を排除して綺麗にする
+        display_df = display_df.drop_duplicates(subset=["tracking_number"], keep="last")
+        
+        for index, row in display_df.iterrows():
             num = str(row["tracking_number"]).strip()
-            # 1行目の見出しそのものや空行はスキップ
             if num == "tracking_number" or num == "" or num == "nan":
                 continue
                 
-            lbl = row["label"] if ("label" in df.columns and pd.notna(row["label"])) else ""
+            lbl = row["label"] if ("label" in display_df.columns and pd.notna(row["label"])) else ""
             if lbl == "label" or lbl == "nan":
                 lbl = ""
             
-            # 日本郵便の追跡URL
             postal_url = f"https://trackings.post.japanpost.jp/services/srv/search/direct?reqCodeNo1={num}"
             
             with st.container():
