@@ -11,7 +11,7 @@ st.title("📦 レターパック追跡管理システム")
 if "tracking_list" not in st.session_state:
     st.session_state.tracking_list = []
 
-# --- 郵便局のページから現在のステータスを自動で持ってくる関数 ---
+# --- 【修正版】郵便局のページから最新のステータスを確実に持ってくる関数 ---
 def fetch_status(tracking_number):
     url = f"https://trackings.post.japanpost.jp/services/srv/search/direct?reqCodeNo1={tracking_number}"
     try:
@@ -19,17 +19,25 @@ def fetch_status(tracking_number):
         response.encoding = 'utf-8'
         soup = BeautifulSoup(response.text, 'html.parser')
         
+        # 履歴が複数行あるメインのテーブル（table_type01）を探す
+        table = soup.find('table', class_='table_type01')
+        if table:
+            rows = table.find_all('tr')
+            # 下から順にチェックして、ステータス（配送履歴）が書かれている行を探す
+            for row in reversed(rows):
+                cols = row.find_all('td')
+                # 正しいデータ行（日付、状態、取扱局などが入っている行）を特定
+                if len(cols) >= 2:
+                    status_text = cols[1].text.strip()
+                    # 見出しや空文字でなければ、それが「最新のステータス」
+                    if status_text and "状態" not in status_text and "配送履歴" not in status_text:
+                        return status_text
+                        
+        # 履歴がまだ少ない場合の予備サーチ
         status_element = soup.find('td', class_='status')
         if status_element:
             return status_element.text.strip()
-        
-        tables = soup.find_all('table', class_='table_type01')
-        if len(tables) >= 2:
-            rows = tables[1].find_all('tr')
-            if len(rows) >= 2:
-                cols = rows[1].find_all('td')
-                if len(cols) >= 2:
-                    return cols[1].text.strip()
+            
         return "データなし（番号確認中）"
     except Exception:
         return "取得エラー（再度お試しください）"
@@ -88,7 +96,6 @@ st.markdown("---")
 st.header("📋 追跡リスト")
 
 if st.session_state.tracking_list:
-    # 管理用ボタンを横並びにする（手動更新 ＆ 一括削除）
     btn_col1, btn_col2, _ = st.columns([3, 3, 4])
     
     with btn_col1:
@@ -112,17 +119,17 @@ if st.session_state.tracking_list:
         status = item.get("status", "未取得")
         
         postal_url = f"https://trackings.post.japanpost.jp/services/srv/search/direct?reqCodeNo1={num}"
-        status_color = "🟢" if "完了" in status else "🔵"
+        
+        # ステータスの色分け（「完了」または「済み」なら緑、それ以外は青）
+        status_color = "🟢" if ("完了" in status or "済み" in status) else "🔵"
         
         with st.container():
-            # 列の配置（番号、ラベル、状態、郵便局リンク、個別の削除ボタン）
             c1, c2, c3, c4, c5 = st.columns([3, 3, 2, 2, 1])
             c1.write(f"**番号**: {num}")
             c2.write(f"**ラベル**: {lbl if lbl else '（なし）'}")
             c3.write(f"**状態**: {status_color} {status}")
             c4.markdown(f"[🔍 郵便局サイト]({postal_url})")
             
-            # 個別削除ボタン（キーが重複しないよう、インデックスを付与しています）
             if c5.button("🗑️", key=f"del_{index}"):
                 st.session_state.tracking_list.pop(index)
                 st.rerun()
